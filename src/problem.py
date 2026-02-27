@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Tuple
+from typing import Any, Iterable, Tuple
 
 import torch
 import torch.nn as nn
@@ -22,9 +22,35 @@ class NeuralBoProblem(ABC):
     def init(self) -> tuple[nn.Module, torch.Tensor]:
         """Return (model, lam)."""
 
-    @abstractmethod
-    def batch(self, role: str, batch_size: int) -> TensorBatch:
-        """Return a batch for a given role."""
+    def batch(self, role: str, batch_size: int) -> Any:
+        """
+        Return a single batch for a given role.
+
+        Override this method for random-access sampling.
+        """
+        raise NotImplementedError("Override batch(...) or dataloader(...) in your problem.")
+
+    def dataloader(self, role: str, batch_size: int) -> Iterable[Any] | None:
+        """
+        Optional role-specific iterable (e.g. torch DataLoader or generator).
+
+        If provided, solvers consume this iterable directly. Otherwise, solvers
+        will fall back to repeatedly calling batch(...).
+        """
+        return None
+
+    def iter_batches(self, role: str, batch_size: int) -> Iterable[Any]:
+        """Yield batches for a role from a dataloader or from repeated sampling."""
+        self.validate_role(role)
+        loader = self.dataloader(role, batch_size)
+        if loader is not None:
+            return loader
+
+        def _infinite_sampler():
+            while True:
+                yield self.batch(role, batch_size)
+
+        return _infinite_sampler()
 
     def batch_roles(self) -> Iterable[str]:
         """Optional: list the roles this problem supports."""
@@ -34,10 +60,6 @@ class NeuralBoProblem(ABC):
         roles = set(self.batch_roles())
         if roles and role not in roles:
             raise ValueError(f"Unknown batch role: {role}. Expected one of {sorted(roles)}")
-
-    def project_lam(self, lam: torch.Tensor) -> torch.Tensor:
-        """Optional projection for lam (e.g. clamp to [0, 1])."""
-        return lam
 
 
 class AIDProblem(NeuralBoProblem, ABC):
@@ -49,9 +71,9 @@ class AIDProblem(NeuralBoProblem, ABC):
         return ("inner", "outer", "hxx", "xw")
 
     @abstractmethod
-    def inner_loss(self, model: nn.Module, lam: torch.Tensor, batch: TensorBatch) -> torch.Tensor:
+    def inner_loss(self, model: nn.Module, lam: torch.Tensor, batch: Any) -> torch.Tensor:
         ...
 
     @abstractmethod
-    def outer_loss(self, model: nn.Module, lam: torch.Tensor, batch: TensorBatch) -> torch.Tensor:
+    def outer_loss(self, model: nn.Module, lam: torch.Tensor, batch: Any) -> torch.Tensor:
         ...

@@ -1,15 +1,15 @@
 from typing import Tuple, Callable
 import time
-from pathlib import Path
 import argparse
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.problem import NeuralBoProblem, AIDProblem
+from src.problem import AIDProblem
 from src.solver.aid import AIDConfig, AIDCGSolver, AIDKFACSolver, KFACConfig
-from examples.model import (
+from model import (
     get_model,
     get_mlp_model,
     get_conv_model,
@@ -50,17 +50,9 @@ class DataCleaningProblem(AIDProblem):
         self.batch_size = batch_size
         self.model_factory = model_factory
         self.flatten_inputs = flatten_inputs
-        self._train_perm = torch.randperm(self.train_x.shape[0], device=self.device)
-        self._train_pos = 0
-        self._val_perm = torch.randperm(self.val_x.shape[0], device=self.device)
-        self._val_pos = 0
 
         self._train_ds = self._get_dataset(self.train_x, self.train_y)
         self._val_ds = self._get_dataset(self.val_x, self.val_y)
-        self.trainloader = self._get_loader(self._train_ds, self.batch_size)
-        self.valloader = self._get_loader(self._val_ds, self.batch_size)
-        self._train_iter = iter(self.trainloader)
-        self._val_iter = iter(self.valloader)
 
     def _get_dataset(self, x: torch.Tensor, y: torch.Tensor):
         return torch.utils.data.TensorDataset(
@@ -71,31 +63,6 @@ class DataCleaningProblem(AIDProblem):
 
     def _get_loader(self, dataset, batch_size: int):
         return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    def _next_batch(self, role: str, batch_size: int):
-        if role == "outer":
-            dataset = self._val_ds
-            loader = self.valloader
-            iterator_attr = "_val_iter"
-        else:
-            dataset = self._train_ds
-            loader = self.trainloader
-            iterator_attr = "_train_iter"
-
-        if batch_size != self.batch_size:
-            temp_loader = self._get_loader(dataset, batch_size)
-            return next(iter(temp_loader))
-
-        try:
-            batch = next(getattr(self, iterator_attr))
-        except StopIteration:
-            if role == "outer":
-                self._val_iter = iter(loader)
-                batch = next(self._val_iter)
-            else:
-                self._train_iter = iter(loader)
-                batch = next(self._train_iter)
-        return batch
 
     def init(self): 
         model = self.model_factory().to(self.device)
@@ -119,9 +86,11 @@ class DataCleaningProblem(AIDProblem):
         logits = model(x)
         return F.cross_entropy(logits, y, reduction="mean")
 
-    def batch(self, role: str, batch_size: int) -> TensorBatch:
+    def dataloader(self, role: str, batch_size: int):
         self.validate_role(role)
-        return self._next_batch(role, batch_size)
+        if role == "outer":
+            return self._get_loader(self._val_ds, batch_size)
+        return self._get_loader(self._train_ds, batch_size)
 
     def project_lam(self, w: torch.Tensor):
         return w.clamp(0.0, 1.0)
@@ -245,10 +214,12 @@ def make_model_factory(args, input_dim: int, num_classes: int, device: str):
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
+    repo_root = Path(__file__).resolve().parents[2]
+    local_data_root = str(repo_root / "data")
     data_path = {
-        'mnist': '../data',
-        'fashion': '../data',
-        'cifar': '../data',
+        "mnist": local_data_root,
+        "fashion": local_data_root,
+        "cifar": local_data_root,
     }
     train, val, test, num_classes = get_data(
         dataset=args.dataset,
@@ -266,7 +237,7 @@ def main():
     flatten_inputs = args.model in {"linear", "mlp"}
     model_factory = make_model_factory(args, input_dim, num_classes, args.device)
 
-    problem: NeuralBoProblem = DataCleaningProblem(
+    problem: AIDProblem = DataCleaningProblem(
         train,
         val,
         model_factory=model_factory,
@@ -322,20 +293,16 @@ def main():
             inner_optimizer=lambda params: torch.optim.SGD(params, lr=cfg.inner_lr, momentum=0.9),
             outer_optimizer=lambda params: torch.optim.SGD(params, lr=cfg.outer_lr, momentum=0.9),
         )
-    model, w = problem.init()
-
-    total_time = 0.0
-    for epoch in range(cfg.epochs):
-        t0 = time.time()
-        # model.train()
-        solver.step(problem, model, w)
-        t1 = time.time()
-        total_time += (t1 - t0)
-
+    state = {"total_time": 0.0, "last_time": time.time()}
+    def on_epoch_end(epoch: int, model: nn.Module, w: torch.Tensor, p: AIDProblem):
+        now = time.time()
+        state["total_time"] += now - state["last_time"]
+        state["last_time"] = now
         with torch.no_grad():
+            w.clamp_(0.0, 1.0)
             model.eval()
-            val_batch = problem.batch("outer", cfg.batch_size)
-            val_loss = problem.outer_loss(model, w, val_batch).item()
+            val_batch = next(iter(p.dataloader("outer", cfg.batch_size)))
+            val_loss = p.outer_loss(model, w, val_batch).item()
             logits = model(test_x)
             test_loss = F.cross_entropy(logits, test_y, reduction="mean").item()
             w_min = w.min().item()
@@ -344,9 +311,19 @@ def main():
             print(
                 f"[info] epoch {epoch:5d} | val loss {val_loss:6.4f} | "
                 f"test loss {test_loss:6.4f} | "
-                f"time {total_time:6.2f} | w-min {w_min:4.2f} "
+                f"time {state['total_time']:6.2f} | w-min {w_min:4.2f} "
                 f"w-max {w_max:4.2f} | w-mean {w_mean:4.2f}"
             )
+        return {
+            "val_loss": val_loss,
+            "test_loss": test_loss,
+            "time": state["total_time"],
+            "w_min": w_min,
+            "w_max": w_max,
+            "w_mean": w_mean,
+        }
+
+    model, w, history = solver.solve(problem, callback=on_epoch_end)
 
 
 if __name__ == "__main__":
