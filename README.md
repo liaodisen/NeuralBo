@@ -1,7 +1,7 @@
 # NeuralBo
 
 This repository contains the implementation for the AISTATS 2026 paper
-`Efficient Bilevel Optimization with KFAC-Based Hypergradients`.
+"Efficient Bilevel Optimization with KFAC-Based Hypergradients".
 
 NeuralBo is a PyTorch library for implementing bilevel optimization algorithms
 for modern neural architectures. The current codebase focuses on reusable
