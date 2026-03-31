@@ -6,7 +6,7 @@ Files:
 
 Run from repo root:
 ```bash
-python examples/bert_data_cleaning/bert_data_cleaning.py
+python examples/bert_data_cleaning/bert_data_cleaning.py --alg AID-KFAC --fine_tune_level 1 --epochs 1000 --batch_size 128 --w_lr 1000
 ```
 
 Default data path points to `examples/trec/`.

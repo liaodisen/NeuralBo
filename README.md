@@ -1,37 +1,25 @@
 # NeuralBo
 
-Reusable PyTorch components for neural bilevel optimization.
+This repository contains the implementation for the AISTATS 2026 paper
+`Efficient Bilevel Optimization with KFAC-Based Hypergradients`.
+
+NeuralBo is a PyTorch library for implementing bilevel optimization algorithms
+for modern neural architectures. The current codebase focuses on reusable
+implicit-differentiation solvers and example workloads ranging from image data
+cleaning to BERT-scale experiments.
 
 Current reusable core in `src/`:
 - `AIDCGSolver` (AID with conjugate-gradient inverse approximation)
 - `AIDKFACSolver` (AID with KFAC inverse approximation)
 - problem interfaces (`NeuralBoProblem`, `AIDProblem`)
 
-## Requirements
-- Python `>=3.9` (from `pyproject.toml`)
-- PyTorch
-- Optional, algorithm-specific:
-  - `curvlinops` for `AID-KFAC`
-  - `transformers` for BERT example
-  - `torchvision` for image example data loading
-
 ## Install
 From repo root:
 
 ```bash
-python -m pip install -e .
-```
-
-Install extra runtime deps as needed:
-
-```bash
-python -m pip install torch torchvision transformers
-```
-
-For KFAC runs:
-
-```bash
-python -m pip install curvlinops
+uv pip install -e . torchvision \
+transformers==4.37.2 \
+"curvlinops-for-pytorch @ git+https://github.com/liaodisen/curvlinops.git@new-wce-kfac"
 ```
 
 ## Project Structure
@@ -85,3 +73,12 @@ The BERT example defaults to `examples/trec/` for data and `hard_labels.npy` for
 ## Notes
 - Weight projection is handled in the example callbacks via manual clipping (`w.clamp_(0, 1)`), not in core solver logic.
 - Additional legacy/experimental scripts may exist at repo root, but the maintained reusable interface is under `src/` and `examples/` above.
+
+## TODO
+- Add more bilevel optimization baselines, including `BOME` and `AmIGO`.
+- Extend support to more modern architectures and large-scale bilevel workloads.
+
+## Acknowledgements
+- `AID-KFAC` in this repository relies on the
+  [`curvlinops`](https://github.com/f-dangel/curvlinops) library for curvature
+  operators and related infrastructure.
