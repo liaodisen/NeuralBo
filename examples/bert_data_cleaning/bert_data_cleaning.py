@@ -299,6 +299,11 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(
+        f"[info] starting BERT data cleaning | alg={args.alg} | epochs={args.epochs} | "
+        f"eval_step={args.eval_step} | device={device}",
+        flush=True,
+    )
 
     data_dir = Path(args.data_dir)
     train_texts, _ = load_trec_split(data_dir / "train.json")
@@ -402,7 +407,9 @@ def main():
         with torch.no_grad():
             w.clamp_(0.0, 1.0)
 
-        if (epoch + 1) % args.eval_step != 0:
+        is_eval_epoch = (epoch + 1) % args.eval_step == 0
+        is_final_epoch = (epoch + 1) == args.epochs
+        if not is_eval_epoch and not is_final_epoch:
             return None
 
         val_batch = next(iter(p.dataloader("outer", cfg.batch_size)))
@@ -419,7 +426,8 @@ def main():
         print(
             f"[info] epoch {epoch:3d} | val loss {val_loss:.4f} | "
             f"test loss {test_loss:.4f} | test acc {test_acc:5.2f} | "
-            f"time {state['total_time']:7.2f}s | w-min {w.min().item():.3f} | w-max {w.max().item():.3f}"
+            f"time {state['total_time']:7.2f}s | w-min {w.min().item():.3f} | w-max {w.max().item():.3f}",
+            flush=True,
         )
         return {
             "val_loss": val_loss,
